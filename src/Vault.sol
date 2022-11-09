@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "openzeppelin/proxy/utils/UUPSUpgradeable.sol";
+import "openzeppelin/proxy/utils/Initializable.sol";
+import "openzeppelin/token/ERC20/utils/SafeERC20.sol";
 
 contract Vault is Initializable, UUPSUpgradeable {
 
@@ -13,8 +13,8 @@ contract Vault is Initializable, UUPSUpgradeable {
     }
 
     struct Signature {
-        /// signature struct
-        
+        /// signature struct --> modify this with signature fields
+        uint256 fillerField;
     }
 
     address allowedAddress;
@@ -34,8 +34,6 @@ contract Vault is Initializable, UUPSUpgradeable {
         address[] calldata tokens,
         uint256[] calldata dailyLimits
     ) public initializer {
-        __UUPSUpgradeable_init();
-
         require(tokens.length == dailyLimits.length, "tokens and dailyLimits are of different lengths");
 
         allowedAddress = tokenBridgeAddress;
@@ -82,7 +80,7 @@ contract Vault is Initializable, UUPSUpgradeable {
             }
 
             if(allowanceDetails.usedDailyAllowance + requestedTokenAmount > allowanceDetails.setDailyAllowance) {
-                largeWithdrawQueue[vaaHash] = block.timetamp;
+                largeWithdrawQueue[vaaHash] = block.timestamp;
                 tokenDailyAllowanceDetails[requestedToken] = allowanceDetails;
                 return(false, "transaction enqueued, wait 24 hours to withdraw");
             } else {
@@ -93,7 +91,7 @@ contract Vault is Initializable, UUPSUpgradeable {
         }
 
         IERC20 transferToken = IERC20(requestedToken);
-        SafeERC20.safeTransfer(requestedToken, allowedAddress, requestedTokenAmount);
+        SafeERC20.safeTransfer(transferToken, allowedAddress, requestedTokenAmount);
         completedWithdrawRequests[vaaHash] = true;
         return(true, "");
 
@@ -102,7 +100,7 @@ contract Vault is Initializable, UUPSUpgradeable {
     function verify(
         bytes32 vaaHash, 
         Signature[] calldata signatures
-    ) internal {
+    ) internal returns (bool){
         /// some signature verification
     }
 
@@ -127,24 +125,24 @@ contract Vault is Initializable, UUPSUpgradeable {
         address newImplementation,
         bytes32 upgradeHash, 
         Signature[] calldata signatures
-    ) {
+    ) public {
         require(keccak256(abi.encodePacked(newImplementation)) == upgradeHash, "upgrade hash doesn't match with new implementation address");
         
         bool verified = verify(upgradeHash, signatures);
 
         require(verified, "signature verification failed");
-        require(governanceActionReplayProtect[upgradeHash] == false, "upgrade can't be replayed");
+        require(governanceActionReplayProtect[upgradeHash] == 0, "upgrade can't be replayed");
 
         _upgradeToAndCallUUPS(newImplementation, new bytes(0), false);
 
-        governanceActionReplayProtect[upgradeHash] = true;
+        governanceActionReplayProtect[upgradeHash] = block.timestamp;
         /// check to ensure contract doesn't get bricked
     }
 
     function changeAllowance(
         address token,
         uint256 newAllowance,
-        Signature[] signatures
+        Signature[] calldata signatures
     ) public {
         /// change allowance code
     }
