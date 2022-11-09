@@ -123,11 +123,10 @@ contract Vault is Initializable, UUPSUpgradeable {
 
     function upgradeContract(
         address newImplementation,
-        bytes32 upgradeHash, 
         Signature[] calldata signatures
     ) public {
-        require(keccak256(abi.encodePacked(newImplementation)) == upgradeHash, "upgrade hash doesn't match with new implementation address");
-        
+        /// action 1 is upgradeContract
+        bytes32 upgradeHash = keccak256(abi.encodePacked(uint8(1), newImplementation));
         bool verified = verify(upgradeHash, signatures);
 
         require(verified, "signature verification failed");
@@ -144,7 +143,14 @@ contract Vault is Initializable, UUPSUpgradeable {
         uint256 newAllowance,
         Signature[] calldata signatures
     ) public {
-        /// change allowance code
+        /// action 2 is changeAllowance
+        bytes32 allowanceChangeHash = keccak256(abi.encodePacked(uint(2), token, newAllowance));
+        bool verified = verify(allowanceChangeHash, signatures);
+
+        require(verified, "signature verification failed");
+        require(governanceActionReplayProtect[allowanceChangeHash] == 0, "allowance change can't be replayed");
+
+        /// add more change allowance code
     }
 
 }
