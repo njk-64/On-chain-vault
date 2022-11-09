@@ -21,9 +21,12 @@ contract Vault is Initializable, UUPSUpgradeable {
     address[] vaultGuardians;
 
     mapping(address => DailyAllowanceDetails) tokenDailyAllowanceDetails;
+
     mapping(bytes32 => uint256) largeWithdrawQueue;
-    mapping(bytes32 => uint256) governanceActionReplayProtect;
     mapping (bytes32 => bool) completedWithdrawRequests;
+
+    mapping(bytes32 => uint256) governanceActionQueue;
+    mapping(bytes32 => bool) completedGovernanceRequests;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() initializer {}
@@ -130,11 +133,11 @@ contract Vault is Initializable, UUPSUpgradeable {
         bool verified = verify(upgradeHash, signatures);
 
         require(verified, "signature verification failed");
-        require(governanceActionReplayProtect[upgradeHash] == 0, "upgrade can't be replayed");
+        require(!completedGovernanceRequests[upgradeHash], "upgrade can't be replayed");
 
         _upgradeToAndCallUUPS(newImplementation, new bytes(0), false);
 
-        governanceActionReplayProtect[upgradeHash] = block.timestamp;
+        completedGovernanceRequests[upgradeHash] = true;
         /// check to ensure contract doesn't get bricked
     }
 
@@ -142,15 +145,50 @@ contract Vault is Initializable, UUPSUpgradeable {
         address token,
         uint256 newAllowance,
         Signature[] calldata signatures
-    ) public {
+    ) public returns (bool, string memory reason){
         /// action 2 is changeAllowance
         bytes32 allowanceChangeHash = keccak256(abi.encodePacked(uint(2), token, newAllowance));
         bool verified = verify(allowanceChangeHash, signatures);
 
-        require(verified, "signature verification failed");
-        require(governanceActionReplayProtect[allowanceChangeHash] == 0, "allowance change can't be replayed");
+        if(!verified) {
+            return(false, "signature verification failed");
+        }
 
-        /// add more change allowance code
+        if(governanceActionQueue[allowanceChangeHash] != 0) {
+            return(false, "allowance change can't be replayed");
+        } 
+
+        uint256 enqueuedTimestamp = governanceActionQueue[allowanceChangeHash];
+
+        if(enqueuedTimestamp != 0) {
+            if(enqueuedTimestamp + 1 days <= block.timestamp) {
+                governanceActionQueue[allowanceChangeHash] = 0;
+            }
+            else {
+                return(false, "wait 24 hours before governance action");
+            }
+        } else {
+            if(tokenDailyAllowanceDetails[token].setDailyAllowance > newAllowance) {
+                return(false, "transaction enqueued, wait 24 hours before increasing allowance");
+            } 
+        }
+
+        tokenDailyAllowanceDetails[token].setDailyAllowance = newAllowance; 
+        completedGovernanceRequests[allowanceChangeHash] = true;
+        return (true, "");
+
+    }
+
+    function disallowChangeAllowance(
+        bytes32 allowanceChangeHash, 
+        Signature[] calldata signatures
+    ) public {
+        bool verified = verify(allowanceChangeHash, signatures);
+
+        require(verified, "signature verification failed");
+        require(governanceActionQueue[allowanceChangeHash] != 0, "transaction is not in queue");
+
+        governanceActionQueue[allowanceChangeHash] = 0;
     }
 
 }
