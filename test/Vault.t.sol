@@ -20,8 +20,6 @@ contract VaultTest is Test {
 
         uint256[] memory initialDailyLimits = new uint256[](1);
         initialDailyLimits[0] = 1 * 10 ** 6;
-
-         
         
         vault.initialize(
             address(this),
@@ -35,17 +33,65 @@ contract VaultTest is Test {
 
         deal(assets[0], address(vault), 1 * 10 ** 16);
         
-        bool result; 
-        string memory reason;
-        (result, reason) = vault.withdrawRequest(bytes32("request hash 1"), assets[0], 1 * 10 ** 5);
-        require(result, reason);
-        (result, reason) = vault.withdrawRequest(bytes32("request hash 2"), assets[0], 1 * 10 ** 5);
-        require(result, reason);
-        (result, reason) = vault.withdrawRequest(bytes32("request hash 3"), assets[0], 1 * 10 ** 5);
-        require(result, reason);
-        (result, reason) = vault.withdrawRequest(bytes32("request hash 4"), assets[0], 1 * 10 ** 5);
-        require(result, reason);
+        successfulWithdrawRequest(bytes32("request hash 1"), assets[0], 1 * 10 ** 5);
+        successfulWithdrawRequest(bytes32("request hash 2"), assets[0], 1 * 10 ** 5);
+        successfulWithdrawRequest(bytes32("request hash 3"), assets[0], 1 * 10 ** 5);
+        successfulWithdrawRequest(bytes32("request hash 4"), assets[0], 1 * 10 ** 5);
 
         skip(1 days);
     }
+
+    function testLargeWithdraw() public {
+
+        deal(assets[0], address(vault), 1 * 10 ** 16);
+        
+        successfulWithdrawRequest(bytes32("request hash 1"), assets[0], 1 * 10 ** 5);
+        successfulWithdrawRequest(bytes32("request hash 2"), assets[0], 1 * 10 ** 5);
+        successfulWithdrawRequest(bytes32("request hash 3"), assets[0], 1 * 10 ** 5);
+        successfulWithdrawRequest(bytes32("request hash 4"), assets[0], 1 * 10 ** 5);
+
+        failedWithdrawRequest(bytes32("request hash 5"), assets[0], 1 * 10 ** 10, "transaction enqueued, wait 24 hours to withdraw");
+        
+        skip(1 days / 2);
+
+        failedWithdrawRequest(bytes32("request hash 5"), assets[0], 1 * 10 ** 10, "wait 24 hours before withdrawing");
+
+        skip(1 days / 2);
+    
+        successfulWithdrawRequest(bytes32("request hash 5"), assets[0], 1 * 10 ** 10);
+
+    }
+
+    
+
+    // Test Helpers
+    function successfulWithdrawRequest(bytes32 vaaHash, address requestedToken, uint256 requestedTokenAmount) internal {
+        bool result;
+        string memory reason;
+        uint256 initialTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
+        uint256 initialVaultBalance = IERC20(requestedToken).balanceOf(address(vault));
+        (result, reason) = vault.withdrawRequest(vaaHash, requestedToken, requestedTokenAmount);
+        require(result, "withdraw request should have succeeded");
+        uint256 finalTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
+        uint256 finalVaultBalance = IERC20(requestedToken).balanceOf(address(vault));
+        require(initialTokenBridgeBalance + requestedTokenAmount == finalTokenBridgeBalance, "Tokens did not transfer to tokenbridge");
+        require(initialVaultBalance - requestedTokenAmount == finalVaultBalance, "Tokens did not transfer from vault");
+    }
+
+    // Test Helpers
+    function failedWithdrawRequest(bytes32 vaaHash, address requestedToken, uint256 requestedTokenAmount, string memory errorMessage) internal {
+        bool result;
+        string memory reason;
+        uint256 initialTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
+        uint256 initialVaultBalance = IERC20(requestedToken).balanceOf(address(vault));
+        (result, reason) = vault.withdrawRequest(vaaHash, requestedToken, requestedTokenAmount);
+        require(!result, "withdraw request should not have gone through");
+        assertEq(bytes(reason), bytes(errorMessage), "withdraw request should have failed for a different reason");
+        uint256 finalTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
+        uint256 finalVaultBalance = IERC20(requestedToken).balanceOf(address(vault));
+        require(initialTokenBridgeBalance == finalTokenBridgeBalance, "A token transfer occured to the tokenbridge when the request should have failed");
+        require(initialVaultBalance == finalVaultBalance, "A token transfer occured from the vault when the request should have failed");
+    
+    }
+
 }
