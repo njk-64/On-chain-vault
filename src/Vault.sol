@@ -4,6 +4,8 @@ import "openzeppelin/proxy/utils/UUPSUpgradeable.sol";
 import "openzeppelin/proxy/utils/Initializable.sol";
 import "openzeppelin/token/ERC20/utils/SafeERC20.sol";
 
+import "forge-std/console.sol";
+
 contract Vault is Initializable, UUPSUpgradeable {
 
     struct DailyAllowanceDetails {
@@ -51,13 +53,17 @@ contract Vault is Initializable, UUPSUpgradeable {
         }
     }
 
+    // Do we want to verify guardian signatures on this withdraw? If so, pass in signature array on this and add verify function)
+    // 'nonce' field allows for multiple messages of the same requestedToken and requestedTokenAmount
     function withdrawRequest(
-        bytes32 vaaHash,
         address requestedToken,
-        uint256 requestedTokenAmount
+        uint256 requestedTokenAmount,
+        uint32 nonce
     ) public returns (bool, string memory reason){
-
-        if(completedWithdrawRequests[vaaHash] == true) {
+        
+        bytes32 withdrawHash = keccak256(abi.encodePacked(uint8(2), requestedToken, requestedTokenAmount, nonce));
+       
+        if(completedWithdrawRequests[withdrawHash] == true) {
             return(false, "allowance already withdrawn");
         }
 
@@ -65,11 +71,11 @@ contract Vault is Initializable, UUPSUpgradeable {
             return(false, "address requesting allowance is not allowed");
         }
 
-        uint256 enqueuedTimestamp = largeWithdrawQueue[vaaHash];
+        uint256 enqueuedTimestamp = largeWithdrawQueue[withdrawHash];
 
         if(enqueuedTimestamp != 0) {
             if(enqueuedTimestamp + 1 days <= block.timestamp) {
-                largeWithdrawQueue[vaaHash] = 0;
+                largeWithdrawQueue[withdrawHash] = 0;
             }
             else {
                 return(false, "wait 24 hours before withdrawing");
@@ -83,7 +89,7 @@ contract Vault is Initializable, UUPSUpgradeable {
             }
 
             if(allowanceDetails.usedDailyAllowance + requestedTokenAmount > allowanceDetails.setDailyAllowance) {
-                largeWithdrawQueue[vaaHash] = block.timestamp;
+                largeWithdrawQueue[withdrawHash] = block.timestamp;
                 tokenDailyAllowanceDetails[requestedToken] = allowanceDetails;
                 return(false, "transaction enqueued, wait 24 hours to withdraw");
             } else {
@@ -95,16 +101,17 @@ contract Vault is Initializable, UUPSUpgradeable {
 
         IERC20 transferToken = IERC20(requestedToken);
         SafeERC20.safeTransfer(transferToken, allowedAddress, requestedTokenAmount);
-        completedWithdrawRequests[vaaHash] = true;
+        completedWithdrawRequests[withdrawHash] = true;
         return(true, "");
 
     }
 
     function verify(
-        bytes32 vaaHash, 
-        Signature[] calldata signatures
+        bytes32 actionHash, 
+        Signature[] calldata signatures,
+        uint8 action
     ) internal returns (bool){
-        /// some signature verification
+        /// some signature verification on 'actionHash' and 'action'
         return true;
     }
 
@@ -114,15 +121,15 @@ contract Vault is Initializable, UUPSUpgradeable {
     }
 
     function disallowLargeWithdraw(
-        bytes32 vaaHash, 
+        bytes32 withdrawHash, 
         Signature[] calldata signatures
     ) public {
-        bool verified = verify(vaaHash, signatures);
+        bool verified = verify(withdrawHash, signatures, 4);
 
         require(verified, "signature verification failed");
-        require(largeWithdrawQueue[vaaHash] != 0, "transaction is not in queue");
+        require(largeWithdrawQueue[withdrawHash] != 0, "transaction is not in queue");
 
-        largeWithdrawQueue[vaaHash] = 0;
+        largeWithdrawQueue[withdrawHash] = 0;
     }
 
     function upgradeContract(
@@ -131,7 +138,7 @@ contract Vault is Initializable, UUPSUpgradeable {
     ) public {
         /// action 1 is upgradeContract
         bytes32 upgradeHash = keccak256(abi.encodePacked(uint8(1), newImplementation));
-        bool verified = verify(upgradeHash, signatures);
+        bool verified = verify(upgradeHash, signatures, 1);
 
         require(verified, "signature verification failed");
         require(!completedGovernanceRequests[upgradeHash], "upgrade can't be replayed");
@@ -142,14 +149,17 @@ contract Vault is Initializable, UUPSUpgradeable {
         /// check to ensure contract doesn't get bricked
     }
 
+    // 'nonce' field allows for multiple messages of the same token and new allowances
     function changeAllowance(
         address token,
         uint256 newAllowance,
-        Signature[] calldata signatures
+        Signature[] calldata signatures,
+        uint32 nonce
     ) public returns (bool, string memory reason){
         /// action 2 is changeAllowance
-        bytes32 allowanceChangeHash = keccak256(abi.encodePacked(uint(2), token, newAllowance));
-        bool verified = verify(allowanceChangeHash, signatures);
+        bytes32 allowanceChangeHash = keccak256(abi.encodePacked(uint8(3), token, newAllowance, nonce));
+        
+        bool verified = verify(allowanceChangeHash, signatures, 3);
 
         if(!verified) {
             return(false, "signature verification failed");
@@ -184,7 +194,7 @@ contract Vault is Initializable, UUPSUpgradeable {
         bytes32 allowanceChangeHash, 
         Signature[] calldata signatures
     ) public {
-        bool verified = verify(allowanceChangeHash, signatures);
+        bool verified = verify(allowanceChangeHash, signatures, 5);
 
         require(verified, "signature verification failed");
         require(governanceActionQueue[allowanceChangeHash] != 0, "transaction is not in queue");

@@ -33,10 +33,10 @@ contract VaultTest is Test {
 
         deal(assets[0], address(vault), 1 * 10 ** 16);
         
-        successfulWithdrawRequest(bytes32("request hash 1"), assets[0], 1 * 10 ** 5);
-        successfulWithdrawRequest(bytes32("request hash 2"), assets[0], 1 * 10 ** 5);
-        successfulWithdrawRequest(bytes32("request hash 3"), assets[0], 1 * 10 ** 5);
-        successfulWithdrawRequest(bytes32("request hash 4"), assets[0], 1 * 10 ** 5);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 0);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 1);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 2);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 3);
 
         skip(1 days);
     }
@@ -45,32 +45,32 @@ contract VaultTest is Test {
 
         deal(assets[0], address(vault), 1 * 10 ** 16);
         
-        successfulWithdrawRequest(bytes32("request hash 1"), assets[0], 1 * 10 ** 5);
-        successfulWithdrawRequest(bytes32("request hash 2"), assets[0], 1 * 10 ** 5);
-        successfulWithdrawRequest(bytes32("request hash 3"), assets[0], 1 * 10 ** 5);
-        successfulWithdrawRequest(bytes32("request hash 4"), assets[0], 1 * 10 ** 5);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 0);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 1);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 2);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 3);
 
-        failedWithdrawRequest(bytes32("request hash 5"), assets[0], 1 * 10 ** 10, "transaction enqueued, wait 24 hours to withdraw");
+        failedWithdrawRequest(assets[0], 1 * 10 ** 10, 0, "transaction enqueued, wait 24 hours to withdraw");
         
         skip(1 days / 2);
 
-        failedWithdrawRequest(bytes32("request hash 5"), assets[0], 1 * 10 ** 10, "wait 24 hours before withdrawing");
+        failedWithdrawRequest(assets[0], 1 * 10 ** 10, 0, "wait 24 hours before withdrawing");
 
         skip(1 days / 2);
     
-        successfulWithdrawRequest(bytes32("request hash 5"), assets[0], 1 * 10 ** 10);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 10, 0);
 
     }
 
     
 
     // Test Helpers
-    function successfulWithdrawRequest(bytes32 vaaHash, address requestedToken, uint256 requestedTokenAmount) internal {
+    function successfulWithdrawRequest(address requestedToken, uint256 requestedTokenAmount, uint32 nonce) internal {
         bool result;
         string memory reason;
         uint256 initialTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
         uint256 initialVaultBalance = IERC20(requestedToken).balanceOf(address(vault));
-        (result, reason) = vault.withdrawRequest(vaaHash, requestedToken, requestedTokenAmount);
+        (result, reason) = vault.withdrawRequest(requestedToken, requestedTokenAmount, nonce);
         require(result, "withdraw request should have succeeded");
         uint256 finalTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
         uint256 finalVaultBalance = IERC20(requestedToken).balanceOf(address(vault));
@@ -79,12 +79,12 @@ contract VaultTest is Test {
     }
 
     // Test Helpers
-    function failedWithdrawRequest(bytes32 vaaHash, address requestedToken, uint256 requestedTokenAmount, string memory errorMessage) internal {
+    function failedWithdrawRequest(address requestedToken, uint256 requestedTokenAmount, uint32 nonce, string memory errorMessage) internal {
         bool result;
         string memory reason;
         uint256 initialTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
         uint256 initialVaultBalance = IERC20(requestedToken).balanceOf(address(vault));
-        (result, reason) = vault.withdrawRequest(vaaHash, requestedToken, requestedTokenAmount);
+        (result, reason) = vault.withdrawRequest(requestedToken, requestedTokenAmount, nonce);
         require(!result, "withdraw request should not have gone through");
         assertEq(bytes(reason), bytes(errorMessage), "withdraw request should have failed for a different reason");
         uint256 finalTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
