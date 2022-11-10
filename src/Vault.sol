@@ -29,7 +29,7 @@ contract Vault is Initializable, UUPSUpgradeable {
     mapping(bytes32 => bool) completedGovernanceRequests;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() initializer {}
+    constructor() {}
 
     function initialize(
         address tokenBridgeAddress,
@@ -105,6 +105,7 @@ contract Vault is Initializable, UUPSUpgradeable {
         Signature[] calldata signatures
     ) internal returns (bool){
         /// some signature verification
+        return true;
     }
 
     /// overriding _authorizeUpgrade
