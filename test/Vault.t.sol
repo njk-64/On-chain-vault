@@ -2,14 +2,13 @@
 pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
-import "../src/Vault.sol";
+import {Vault} from "../src/Vault.sol";
 
 import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
+import {TestHelpers} from "./TestHelpers.sol";
+import {TestState} from "./TestState.sol";
 
-contract VaultTest is Test {
-    Vault public vault;
-
-    address[] assets;
+contract VaultTest is Test, TestState, TestHelpers {
  
     function setUp() public {
         vault = new Vault();
@@ -50,11 +49,11 @@ contract VaultTest is Test {
         successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 2);
         successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 3);
 
-        failedWithdrawRequest(assets[0], 1 * 10 ** 10, 0, "transaction enqueued, wait 24 hours to withdraw");
+        failedWithdrawRequest(assets[0], 1 * 10 ** 10, 0, "Action enqueued, wait 24 hours to complete action");
         
         skip(1 days / 2);
 
-        failedWithdrawRequest(assets[0], 1 * 10 ** 10, 0, "wait 24 hours before withdrawing");
+        failedWithdrawRequest(assets[0], 1 * 10 ** 10, 0, "Wait 24 hours before completing action");
 
         skip(1 days / 2);
     
@@ -62,36 +61,58 @@ contract VaultTest is Test {
 
     }
 
+    function testChangeLimit() public {
+
+        deal(assets[0], address(vault), 1 * 10 ** 16);
+        
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 0);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 1);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 2);
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 5, 3);
+
+        failedWithdrawRequest(assets[0], 1 * 10 ** 10, 0, "Action enqueued, wait 24 hours to complete action");
+        
+        skip(1 days / 2);
+
+        failedWithdrawRequest(assets[0], 1 * 10 ** 10, 0, "Wait 24 hours before completing action");
+
+        skip(1 days / 2);
     
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 10, 0);
 
-    // Test Helpers
-    function successfulWithdrawRequest(address requestedToken, uint256 requestedTokenAmount, uint32 nonce) internal {
-        bool result;
-        string memory reason;
-        uint256 initialTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
-        uint256 initialVaultBalance = IERC20(requestedToken).balanceOf(address(vault));
-        (result, reason) = vault.withdrawRequest(requestedToken, requestedTokenAmount, nonce);
-        require(result, "withdraw request should have succeeded");
-        uint256 finalTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
-        uint256 finalVaultBalance = IERC20(requestedToken).balanceOf(address(vault));
-        require(initialTokenBridgeBalance + requestedTokenAmount == finalTokenBridgeBalance, "Tokens did not transfer to tokenbridge");
-        require(initialVaultBalance - requestedTokenAmount == finalVaultBalance, "Tokens did not transfer from vault");
+        failedWithdrawRequest(assets[0], 1 * 10 ** 10, 13, "Action enqueued, wait 24 hours to complete action");
+
+        successfulChangeLimit(assets[0], 10, 0);
+
+        failedChangeLimit(assets[0], 10 ** 15, 2, "Action enqueued, wait 24 hours to complete action");
+
+        skip(1 days / 2);
+
+        failedChangeLimit(assets[0], 10 ** 15, 2, "Wait 24 hours before completing action");
+
+        skip(1 days / 3);
+
+        failedChangeLimit(assets[0], 10 ** 15, 2, "Wait 24 hours before completing action");
+
+        failedWithdrawRequest(assets[0], 11, 2334, "Action enqueued, wait 24 hours to complete action");
+
+        skip(1 days / 6);
+
+        successfulChangeLimit(assets[0], 10 ** 15, 2);
+
+        successfulWithdrawRequest(assets[0], 1 * 10 ** 15, 1245);
+
+        skip(5 days / 6);
+
+        failedWithdrawRequest(assets[0], 1, 1246, "Action enqueued, wait 24 hours to complete action");
+
+        skip(1 days / 6);
+        
+        successfulWithdrawRequest(assets[0], 1, 1247);
+
+        failedWithdrawRequest(assets[0], 1, 1246, "Wait 24 hours before completing action");
+
+
+
     }
-
-    // Test Helpers
-    function failedWithdrawRequest(address requestedToken, uint256 requestedTokenAmount, uint32 nonce, string memory errorMessage) internal {
-        bool result;
-        string memory reason;
-        uint256 initialTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
-        uint256 initialVaultBalance = IERC20(requestedToken).balanceOf(address(vault));
-        (result, reason) = vault.withdrawRequest(requestedToken, requestedTokenAmount, nonce);
-        require(!result, "withdraw request should not have gone through");
-        assertEq(bytes(reason), bytes(errorMessage), "withdraw request should have failed for a different reason");
-        uint256 finalTokenBridgeBalance = IERC20(requestedToken).balanceOf(address(this));
-        uint256 finalVaultBalance = IERC20(requestedToken).balanceOf(address(vault));
-        require(initialTokenBridgeBalance == finalTokenBridgeBalance, "A token transfer occured to the tokenbridge when the request should have failed");
-        require(initialVaultBalance == finalVaultBalance, "A token transfer occured from the vault when the request should have failed");
-    
-    }
-
 }
