@@ -6,32 +6,17 @@ import "openzeppelin/token/ERC20/utils/SafeERC20.sol";
 
 import "forge-std/console.sol";
 
-contract Vault is Initializable, UUPSUpgradeable {
+import {VaultStructs} from "./VaultStructs.sol";
+import {VaultState} from "./VaultState.sol";
+import {VaultGetters} from "./VaultGetters.sol";
+import {VaultSetters} from "./VaultSetters.sol";
 
-    struct DailyAllowanceDetails {
-        uint256 setDailyAllowance;
-        uint256 usedDailyAllowance;
-        uint256 dailyTimestampStart;
+contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, VaultGetters, VaultSetters {
+
+    modifier onlyAllowedAddress() {
+        require(msg.sender == getAllowedAddress(), "Not allowed address");
+        _;
     }
-
-    struct Signature {
-        /// signature struct --> modify this with signature fields
-        uint256 fillerField;
-    }
-
-    address allowedAddress;
-    address[] vaultGuardians;
-
-    mapping(address => DailyAllowanceDetails) tokenDailyAllowanceDetails;
-
-    mapping(bytes32 => uint256) largeWithdrawQueue;
-    mapping (bytes32 => bool) completedWithdrawRequests;
-
-    mapping(bytes32 => uint256) governanceActionQueue;
-    mapping(bytes32 => bool) completedGovernanceRequests;
-
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {}
 
     function initialize(
         address tokenBridgeAddress,
@@ -41,77 +26,134 @@ contract Vault is Initializable, UUPSUpgradeable {
     ) public initializer {
         require(tokens.length == dailyLimits.length, "tokens and dailyLimits are of different lengths");
 
-        allowedAddress = tokenBridgeAddress;
-
         for(uint i=0; i < vaultGuardianAddresses.length; i++) {
-            vaultGuardians.push(vaultGuardianAddresses[i]);
+           addVaultGuardian(vaultGuardianAddresses[i]);
+        }
+        for(uint i=0; i < tokens.length; i++) {
+            setTokenDailyLimit(tokens[i], dailyLimits[i]);
         }
 
-        for(uint i=0; i < tokens.length; i++) {
-            tokenDailyAllowanceDetails[tokens[i]].setDailyAllowance = dailyLimits[i];
-            tokenDailyAllowanceDetails[tokens[i]].dailyTimestampStart = block.timestamp;
+        setAllowedAddress(tokenBridgeAddress);        
+    }
+
+
+    function withdraw(
+        address token,
+        uint256 tokenAmount,
+        uint256 requestId
+    ) public onlyAllowedAddress returns (bool result, string memory reason){
+        
+        bytes32 withdrawHash = keccak256(abi.encodePacked(Action.Withdraw, token, tokenAmount, requestId));
+        DailyLimitInfo memory info = getTokenDailyLimitInfo(token);
+
+        if(info.dayStart + 1 days <= block.timestamp) {
+            resetTokenDailyLimit(token);
+            info = getTokenDailyLimitInfo(token);
+        }
+
+        bool withinLimits = info.used + tokenAmount <= info.dailyLimit;
+
+        (result, reason) = tryExecutingAction(withdrawHash, withinLimits);
+
+        if(result) {
+            updateDailyUsed(token, tokenAmount);
+            SafeERC20.safeTransfer(IERC20(token), getAllowedAddress(), tokenAmount);
         }
     }
 
-    // Do we want to verify guardian signatures on this withdraw? If so, pass in signature array on this and add verify function)
-    // 'nonce' field allows for multiple messages of the same requestedToken and requestedTokenAmount
-    function withdrawRequest(
-        address requestedToken,
-        uint256 requestedTokenAmount,
-        uint32 nonce
-    ) public returns (bool, string memory reason){
+    function changeLimit(
+        address token,
+        uint256 newLimit,
+        uint256 requestId,
+        Signature[] calldata signatures
+    ) public returns (bool result, string memory reason){
+
+        bytes32 allowanceChangeHash = keccak256(abi.encodePacked(Action.ChangeLimit, token, newLimit, requestId));
         
-        bytes32 withdrawHash = keccak256(abi.encodePacked(uint8(2), requestedToken, requestedTokenAmount, nonce));
-       
-        if(completedWithdrawRequests[withdrawHash] == true) {
-            return(false, "allowance already withdrawn");
+        bool verified = verify(keccak256(abi.encodePacked(ActionType.Allow, allowanceChangeHash)), signatures);
+
+        if(!verified) {
+            return(false, "signature verification failed");
         }
 
-        if(msg.sender != allowedAddress) {
-            return(false, "address requesting allowance is not allowed");
+        bool isDecrease = getTokenDailyLimitInfo(token).dailyLimit >= newLimit;
+
+        (result, reason) = tryExecutingAction(allowanceChangeHash, isDecrease);
+
+        if(result) {
+            setTokenDailyLimit(token, newLimit);
+        } 
+    }
+
+    function upgradeContract(
+        address newImplementation,
+        uint256 requestId,
+        Signature[] calldata signatures
+    ) public returns (bool result, string memory reason) {
+
+        bytes32 upgradeHash = keccak256(abi.encodePacked(Action.UpgradeContract, newImplementation, requestId));
+        bool verified = verify(keccak256(abi.encodePacked(ActionType.Allow, upgradeHash)), signatures);
+
+        if(!verified) {
+            return(false, "signature verification failed");
+        }
+        
+        (result, reason) = tryExecutingAction(upgradeHash, false);
+
+        if(result) {
+            _upgradeToAndCallUUPS(newImplementation, new bytes(0), false);
         }
 
-        uint256 enqueuedTimestamp = largeWithdrawQueue[withdrawHash];
+    }
 
-        if(enqueuedTimestamp != 0) {
-            if(enqueuedTimestamp + 1 days <= block.timestamp) {
-                largeWithdrawQueue[withdrawHash] = 0;
-            }
-            else {
-                return(false, "wait 24 hours before withdrawing");
+    function disallowAction(bytes32 identifier, Signature[] calldata signatures) public returns (bool result, string memory reason) {
+        bool verified = verify(keccak256(abi.encodePacked(ActionType.Disallow, identifier)), signatures);
+
+        if(!verified) {
+            return(false, "signature verification failed");
+        }
+
+        removeActionFromPendingQueue(identifier);
+
+        return (true, "");
+    }
+
+
+
+
+    function tryExecutingAction(bytes32 identifier, bool wouldExecuteInstantly) internal returns (bool shouldExecute, string memory reason) {
+        
+        if(isActionCompleted(identifier)) {
+            shouldExecute = false;
+            reason = "Action already completed";
+        } else if(pendingActionStatus(identifier) != 0) {
+            if(pendingActionStatus(identifier) + 1 days <= block.timestamp) {
+                shouldExecute = true;
+                removeActionFromPendingQueue(identifier);
+            } else {
+                shouldExecute = false;
+                reason = "Wait 24 hours before completing action";
             }
         } else {
-            DailyAllowanceDetails memory allowanceDetails = tokenDailyAllowanceDetails[requestedToken];
-
-            if(allowanceDetails.dailyTimestampStart + 1 days <= block.timestamp) {
-                allowanceDetails.dailyTimestampStart = block.timestamp;
-                allowanceDetails.usedDailyAllowance = 0;
-            }
-
-            if(allowanceDetails.usedDailyAllowance + requestedTokenAmount > allowanceDetails.setDailyAllowance) {
-                largeWithdrawQueue[withdrawHash] = block.timestamp;
-                tokenDailyAllowanceDetails[requestedToken] = allowanceDetails;
-                return(false, "transaction enqueued, wait 24 hours to withdraw");
+            if(wouldExecuteInstantly) {
+                shouldExecute = true;
             } else {
-                allowanceDetails.usedDailyAllowance += requestedTokenAmount;
-                tokenDailyAllowanceDetails[requestedToken] = allowanceDetails;
+                shouldExecute = false;
+                reason = "Action enqueued, wait 24 hours to complete action";
+                setActionPending(identifier);
             }
-
         }
 
-        IERC20 transferToken = IERC20(requestedToken);
-        SafeERC20.safeTransfer(transferToken, allowedAddress, requestedTokenAmount);
-        completedWithdrawRequests[withdrawHash] = true;
-        return(true, "");
-
+        if(shouldExecute){
+            setActionCompleted(identifier);
+            reason = "";
+        }
     }
 
     function verify(
         bytes32 actionHash, 
-        Signature[] calldata signatures,
-        uint8 action
-    ) internal returns (bool){
-        /// some signature verification on 'actionHash' and 'action'
+        Signature[] calldata signatures
+    ) internal returns (bool) {
         return true;
     }
 
@@ -119,87 +161,5 @@ contract Vault is Initializable, UUPSUpgradeable {
     function _authorizeUpgrade(address newImplementation) internal override {
         require(false, "always revert");
     }
-
-    function disallowLargeWithdraw(
-        bytes32 withdrawHash, 
-        Signature[] calldata signatures
-    ) public {
-        bool verified = verify(withdrawHash, signatures, 4);
-
-        require(verified, "signature verification failed");
-        require(largeWithdrawQueue[withdrawHash] != 0, "transaction is not in queue");
-
-        largeWithdrawQueue[withdrawHash] = 0;
-    }
-
-    function upgradeContract(
-        address newImplementation,
-        Signature[] calldata signatures
-    ) public {
-        /// action 1 is upgradeContract
-        bytes32 upgradeHash = keccak256(abi.encodePacked(uint8(1), newImplementation));
-        bool verified = verify(upgradeHash, signatures, 1);
-
-        require(verified, "signature verification failed");
-        require(!completedGovernanceRequests[upgradeHash], "upgrade can't be replayed");
-
-        _upgradeToAndCallUUPS(newImplementation, new bytes(0), false);
-
-        completedGovernanceRequests[upgradeHash] = true;
-        /// check to ensure contract doesn't get bricked
-    }
-
-    // 'nonce' field allows for multiple messages of the same token and new allowances
-    function changeAllowance(
-        address token,
-        uint256 newAllowance,
-        Signature[] calldata signatures,
-        uint32 nonce
-    ) public returns (bool, string memory reason){
-        /// action 2 is changeAllowance
-        bytes32 allowanceChangeHash = keccak256(abi.encodePacked(uint8(3), token, newAllowance, nonce));
-        
-        bool verified = verify(allowanceChangeHash, signatures, 3);
-
-        if(!verified) {
-            return(false, "signature verification failed");
-        }
-
-        if(governanceActionQueue[allowanceChangeHash] != 0) {
-            return(false, "allowance change can't be replayed");
-        } 
-
-        uint256 enqueuedTimestamp = governanceActionQueue[allowanceChangeHash];
-
-        if(enqueuedTimestamp != 0) {
-            if(enqueuedTimestamp + 1 days <= block.timestamp) {
-                governanceActionQueue[allowanceChangeHash] = 0;
-            }
-            else {
-                return(false, "wait 24 hours before governance action");
-            }
-        } else {
-            if(tokenDailyAllowanceDetails[token].setDailyAllowance > newAllowance) {
-                return(false, "transaction enqueued, wait 24 hours before increasing allowance");
-            } 
-        }
-
-        tokenDailyAllowanceDetails[token].setDailyAllowance = newAllowance; 
-        completedGovernanceRequests[allowanceChangeHash] = true;
-        return (true, "");
-
-    }
-
-    function disallowChangeAllowance(
-        bytes32 allowanceChangeHash, 
-        Signature[] calldata signatures
-    ) public {
-        bool verified = verify(allowanceChangeHash, signatures, 5);
-
-        require(verified, "signature verification failed");
-        require(governanceActionQueue[allowanceChangeHash] != 0, "transaction is not in queue");
-
-        governanceActionQueue[allowanceChangeHash] = 0;
-    }
-
+   
 }
