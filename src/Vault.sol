@@ -19,7 +19,7 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
     }
 
     function initialize(
-        address tokenBridgeAddress,
+        address allowedAddress,
         address[] calldata vaultGuardianAddresses,
         address[] calldata tokens,
         uint256[] calldata dailyLimits
@@ -30,10 +30,15 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
            addVaultGuardian(vaultGuardianAddresses[i]);
         }
         for(uint i=0; i < tokens.length; i++) {
-            setTokenDailyLimit(tokens[i], dailyLimits[i]);
+            DailyLimitInfo memory info = DailyLimitInfo({
+                dailyLimit: dailyLimits[i],
+                used: 0,
+                dayStart: block.timestamp
+            });
+            setTokenDailyLimitInfo(tokens[i], info);
         }
 
-        setAllowedAddress(tokenBridgeAddress);        
+        setAllowedAddress(allowedAddress);        
     }
 
 
@@ -47,8 +52,8 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
         DailyLimitInfo memory info = getTokenDailyLimitInfo(token);
 
         if(info.dayStart + 1 days <= block.timestamp) {
-            resetTokenDailyLimit(token);
-            info = getTokenDailyLimitInfo(token);
+            info.used = 0;
+            info.dayStart = block.timestamp;
         }
 
         bool withinLimits = info.used + tokenAmount <= info.dailyLimit;
@@ -56,7 +61,12 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
         (result, reason) = tryExecutingAction(withdrawHash, withinLimits);
 
         if(result) {
-            updateDailyUsed(token, tokenAmount);
+            info.used += tokenAmount;
+        }
+
+        setTokenDailyLimitInfo(token, info);
+
+        if(result) {
             SafeERC20.safeTransfer(IERC20(token), getAllowedAddress(), tokenAmount);
         }
     }
@@ -76,12 +86,15 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
             return(false, "signature verification failed");
         }
 
-        bool isDecrease = getTokenDailyLimitInfo(token).dailyLimit >= newLimit;
+        DailyLimitInfo memory info = getTokenDailyLimitInfo(token);
+
+        bool isDecrease = info.dailyLimit >= newLimit;
 
         (result, reason) = tryExecutingAction(allowanceChangeHash, isDecrease);
 
         if(result) {
-            setTokenDailyLimit(token, newLimit);
+            info.dailyLimit = newLimit;
+            setTokenDailyLimitInfo(token, info);
         } 
     }
 
@@ -123,11 +136,13 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
 
     function tryExecutingAction(bytes32 identifier, bool wouldExecuteInstantly) internal returns (bool shouldExecute, string memory reason) {
         
+        uint256 timestampOfAction = pendingActionStatus(identifier);
+
         if(isActionCompleted(identifier)) {
             shouldExecute = false;
             reason = "Action already completed";
-        } else if(pendingActionStatus(identifier) != 0) {
-            if(pendingActionStatus(identifier) + 1 days <= block.timestamp) {
+        } else if(timestampOfAction != 0) {
+            if(timestampOfAction + 1 days <= block.timestamp) {
                 shouldExecute = true;
                 removeActionFromPendingQueue(identifier);
             } else {

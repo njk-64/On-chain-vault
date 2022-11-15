@@ -14,17 +14,8 @@ contract VaultSetters is VaultStructs, VaultState {
         _state.vaultGuardians.push(vaultGuardian);
     }
 
-    function setTokenDailyLimit(address token, uint256 dailyLimit) internal {
-        _state.tokenDailyLimitInfo[token].dailyLimit = dailyLimit;
-    }
-
-    function resetTokenDailyLimit(address token) internal {
-        _state.tokenDailyLimitInfo[token].used = 0;
-        _state.tokenDailyLimitInfo[token].dayStart = block.timestamp;
-    }
-
-    function updateDailyUsed(address token, uint256 amount) internal {
-        _state.tokenDailyLimitInfo[token].used += amount;
+    function setTokenDailyLimitInfo(address token, DailyLimitInfo memory info) internal {
+        _state.tokenDailyLimitInfo[token] = info;
     }
 
     function setActionCompleted(bytes32 identifier) internal {
