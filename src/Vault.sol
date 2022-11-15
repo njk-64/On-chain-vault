@@ -23,7 +23,7 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
         address[] calldata vaultGuardianAddresses,
         address[] calldata tokens,
         uint256[] calldata dailyLimits
-    ) public initializer {
+    ) external initializer {
         require(tokens.length == dailyLimits.length, "tokens and dailyLimits are of different lengths");
 
         for(uint i=0; i < vaultGuardianAddresses.length; i++) {
@@ -46,7 +46,7 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
         address token,
         uint256 tokenAmount,
         uint256 requestId
-    ) public onlyAllowedAddress returns (bool result, string memory reason){
+    ) external onlyAllowedAddress returns (bool result, string memory reason){
         
         bytes32 withdrawHash = keccak256(abi.encodePacked(Action.Withdraw, token, tokenAmount, requestId));
         DailyLimitInfo memory info = getTokenDailyLimitInfo(token);
@@ -76,7 +76,7 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
         uint256 newLimit,
         uint256 requestId,
         Signature[] calldata signatures
-    ) public returns (bool result, string memory reason){
+    ) external returns (bool result, string memory reason){
 
         bytes32 allowanceChangeHash = keccak256(abi.encodePacked(Action.ChangeLimit, token, newLimit, requestId));
         
@@ -102,7 +102,7 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
         address newImplementation,
         uint256 requestId,
         Signature[] calldata signatures
-    ) public returns (bool result, string memory reason) {
+    ) external returns (bool result, string memory reason) {
 
         bytes32 upgradeHash = keccak256(abi.encodePacked(Action.UpgradeContract, newImplementation, requestId));
         bool verified = verify(keccak256(abi.encodePacked(ActionType.Allow, upgradeHash)), signatures);
@@ -119,7 +119,7 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
 
     }
 
-    function disallowAction(bytes32 identifier, Signature[] calldata signatures) public returns (bool result, string memory reason) {
+    function disallowAction(bytes32 identifier, Signature[] calldata signatures) external returns (bool result, string memory reason) {
         bool verified = verify(keccak256(abi.encodePacked(ActionType.Disallow, identifier)), signatures);
 
         if(!verified) {
