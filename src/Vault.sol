@@ -12,6 +12,9 @@ import {VaultGetters} from "./VaultGetters.sol";
 import {VaultSetters} from "./VaultSetters.sol";
 
 contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, VaultGetters, VaultSetters {
+    event withdrawPending(bytes32 identifier, address token, uint256 tokenAmount, uint256 requestId, uint256 timestamp);
+    event changeLimitPending(bytes32 identifier, address token, uint256 newLimit, uint256 requestId, uint256 timestamp);
+    event upgradeContractPending(bytes32 identifier, address newImplementation, uint256 requestId, uint256 timestamp);
 
     modifier onlyAllowedAddress() {
         require(msg.sender == getAllowedAddress(), "Not allowed address");
@@ -51,6 +54,8 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
         bytes32 withdrawHash = keccak256(abi.encodePacked(Action.Withdraw, token, tokenAmount, requestId));
         DailyLimitInfo memory info = getTokenDailyLimitInfo(token);
 
+        require(info.dailyLimit != 0, "Token not set in the vault");
+
         if(info.dayStart + 1 days <= block.timestamp) {
             info.used = 0;
             info.dayStart = block.timestamp;
@@ -58,7 +63,9 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
 
         bool withinLimits = info.used + tokenAmount <= info.dailyLimit;
 
-        (result, reason) = tryExecutingAction(withdrawHash, withinLimits);
+        bool isPending;
+
+        (result, reason, isPending) = tryExecutingAction(withdrawHash, withinLimits);
 
         if(result) {
             info.used += tokenAmount;
@@ -68,6 +75,10 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
 
         if(result) {
             SafeERC20.safeTransfer(IERC20(token), getAllowedAddress(), tokenAmount);
+        }
+
+        if(isPending) {
+            emit withdrawPending(withdrawHash, token, tokenAmount, requestId, block.timestamp);
         }
     }
 
@@ -90,12 +101,18 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
 
         bool isDecrease = info.dailyLimit >= newLimit;
 
-        (result, reason) = tryExecutingAction(allowanceChangeHash, isDecrease);
+        bool isPending;
+
+        (result, reason, isPending) = tryExecutingAction(allowanceChangeHash, isDecrease);
 
         if(result) {
             info.dailyLimit = newLimit;
             setTokenDailyLimitInfo(token, info);
         } 
+
+        if(isPending) {
+            emit changeLimitPending(allowanceChangeHash, token, newLimit, requestId, block.timestamp);
+        }
     }
 
     function upgradeContract(
@@ -111,10 +128,16 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
             return(false, "signature verification failed");
         }
         
-        (result, reason) = tryExecutingAction(upgradeHash, false);
+        bool isPending;
+
+        (result, reason, isPending) = tryExecutingAction(upgradeHash, false);
 
         if(result) {
             _upgradeToAndCallUUPS(newImplementation, new bytes(0), false);
+        }
+
+        if(isPending) {
+            emit upgradeContractPending(upgradeHash, newImplementation, requestId, block.timestamp);
         }
 
     }
@@ -131,10 +154,7 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
         return (true, "");
     }
 
-
-
-
-    function tryExecutingAction(bytes32 identifier, bool wouldExecuteInstantly) internal returns (bool shouldExecute, string memory reason) {
+    function tryExecutingAction(bytes32 identifier, bool wouldExecuteInstantly) internal returns (bool shouldExecute, string memory reason, bool isPending) {
         
         uint256 timestampOfAction = pendingActionStatus(identifier);
 
@@ -155,6 +175,7 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
             } else {
                 shouldExecute = false;
                 reason = "Action enqueued, wait 24 hours to complete action";
+                isPending = true;
                 setActionPending(identifier);
             }
         }
