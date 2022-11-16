@@ -44,7 +44,6 @@ contract Vault is Initializable, UUPSUpgradeable, VaultStructs, VaultState, Vaul
         setAllowedAddress(allowedAddress);        
     }
 
-
     function withdraw(
         address token,
         uint256 tokenAmount,

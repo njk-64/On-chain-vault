@@ -26,4 +26,12 @@ contract VaultGetters is VaultStructs, VaultState {
         return _state.pendingActionQueue[identifier];
     }
 
+    function isTokenValid(address token) external view returns (bool) {
+        if(_state.tokenDailyLimitInfo[token].dailyLimit == 0) {
+            return false;
+        } else {
+            return true;
+        }
+    }
+
 }
