@@ -6,28 +6,28 @@ import {VaultState} from "./VaultState.sol";
 
 contract VaultSetters is VaultStructs, VaultState {
 
-    function setAllowedAddress(address allowedAddress) internal {
-        _state.allowedAddress = allowedAddress;
+    function setWithdrawAddress(address allowedAddress) internal {
+        _state.withdrawAddress = allowedAddress;
     }
 
-    function addVaultGuardian(address vaultGuardian) internal {
-        _state.vaultGuardians.push(vaultGuardian);
+    function setTrustedAddress(address allowedAddress) internal {
+        _state.trustedAddress = allowedAddress;
     }
 
     function setTokenDailyLimitInfo(address token, DailyLimitInfo memory info) internal {
         _state.tokenDailyLimitInfo[token] = info;
     }
 
-    function setActionCompleted(bytes32 identifier) internal {
-         _state.completedActions[identifier] = true;
+    function setLargeWithdrawInfo(uint256 identifier, LargeWithdrawInfo memory info) internal {
+        _state.largeWithdrawQueue[identifier] = info;
     }
 
-    function setActionPending(bytes32 identifier) internal {
-        _state.pendingActionQueue[identifier] = block.timestamp;
+    function setDayLength(uint256 dayLength) internal {
+        _state.dayLength = dayLength;
     }
 
-    function removeActionFromPendingQueue(bytes32 identifier) internal {
-        _state.pendingActionQueue[identifier] = 0;
+    function setWithdrawQueueDuration(uint256 withdrawQueueDuration) internal {
+        _state.withdrawQueueDuration = withdrawQueueDuration;
     }
 
 }
