@@ -6,13 +6,14 @@ import {VaultStructs} from "./VaultStructs.sol";
 contract VaultStorage {
 
     struct State {
-        address allowedAddress;
-        address[] vaultGuardians;
-
-        mapping(bytes32 => uint256) pendingActionQueue;
-        mapping(bytes32 => bool) completedActions;
+        address withdrawAddress;
+        address trustedAddress;
 
         mapping(address => VaultStructs.DailyLimitInfo) tokenDailyLimitInfo;
+        mapping(uint256 => VaultStructs.LargeWithdrawInfo) largeWithdrawQueue;
+
+        uint256 dayLength;
+        uint256 withdrawQueueDuration;
     }
 }
 
