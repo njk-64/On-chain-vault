@@ -135,11 +135,7 @@ contract Vault is VaultStructs, VaultState, VaultGetters, VaultSetters {
     function changeWithdrawAddress(address newAddress) external onlyTrustedAddress {
         setWithdrawAddress(newAddress);
     }
-
-    function changeTrustedAddress(address newAddress) external onlyTrustedAddress {
-        setTrustedAddress(newAddress);
-    }
-
+    
     function changeDailyLimit(address token, uint256 newLimit) external onlyTrustedAddress validToken(token) {
         DailyLimitInfo memory info = getTokenDailyLimitInfo(token);
         info.dailyLimit = newLimit;
