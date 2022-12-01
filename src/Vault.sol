@@ -147,13 +147,6 @@ contract Vault {
         withdrawAddress = newAddress;
     }
 
-    function changeTrustedAddress(
-        address newAddress
-    ) external onlyTrustedAddress {
-        require(newAddress != address(0), "can't set trusted address to zero address");
-        trustedAddress = newAddress;
-    }
-
     function changeDailyLimit(
         address token, uint256 newLimit
     ) external onlyTrustedAddress {
