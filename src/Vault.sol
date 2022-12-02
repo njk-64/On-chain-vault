@@ -24,7 +24,7 @@ contract Vault {
     event withdrawAboveLimitPending(address token, uint256 tokenAmount, uint256 timestamp, uint256 identifier);
 
     address withdrawAddress;
-    address trustedAddress;
+    address governance;
 
     mapping(address => DailyLimitInfo) tokenDailyLimitInfo;
     mapping(uint256 => LargeWithdrawInfo) largeWithdrawQueue;
@@ -37,14 +37,14 @@ contract Vault {
         _;
     }
 
-    modifier onlyTrustedAddress() {
-        require(msg.sender == trustedAddress, "Sender is not the trusted address");
+    modifier onlyGovernance() {
+        require(msg.sender == governance, "Sender is not the governance address");
         _;
     }
 
     constructor(
         address _withdrawAddress,
-        address _trustedAddress,
+        address _governance,
         address[] memory tokens,
         uint256[] memory dailyLimits,
         uint256 _dayLength,
@@ -53,7 +53,7 @@ contract Vault {
         require(tokens.length == dailyLimits.length, "tokens and dailyLimits are of different lengths");
 
         withdrawAddress = _withdrawAddress;
-        trustedAddress = _trustedAddress;
+        governance = _governance;
         dayLength = _dayLength;
         withdrawQueueDuration = _withdrawQueueDuration;
 
@@ -134,7 +134,7 @@ contract Vault {
 
     function disallowLargeWithdraw(
         uint256 identifier
-    ) external onlyTrustedAddress {
+    ) external onlyGovernance {
         LargeWithdrawInfo storage info = largeWithdrawQueue[identifier];
         require(info.enqueuedTimestamp != 0, "This withdraw is not in the queue");
         info.disallowed = true;
@@ -142,14 +142,14 @@ contract Vault {
 
     function changeWithdrawAddress(
         address newAddress
-    ) external onlyTrustedAddress {
+    ) external onlyGovernance {
         require(newAddress != address(0), "can't set withdraw address to zero address");
         withdrawAddress = newAddress;
     }
 
     function changeDailyLimit(
         address token, uint256 newLimit
-    ) external onlyTrustedAddress {
+    ) external onlyGovernance {
         // removing the valid token check as new tokens can also be added through this method
         DailyLimitInfo storage info = tokenDailyLimitInfo[token];
         info.dailyLimit = newLimit;
