@@ -9,6 +9,7 @@ contract Vault {
     struct DailyLimitInfo {
         uint256 dailyLimit;
         uint256 lastRequestTimestamp;
+        bool validToken;
     }
 
     struct LargeWithdrawInfo {
@@ -51,6 +52,7 @@ contract Vault {
         uint256 _withdrawQueueDuration
     ) {
         require(tokens.length == dailyLimits.length, "tokens and dailyLimits are of different lengths");
+        require(_dayLength < block.timestamp, "day length too long");
 
         withdrawAddress = _withdrawAddress;
         governance = _governance;
@@ -60,7 +62,7 @@ contract Vault {
         for(uint i=0; i < tokens.length; i++) {
             DailyLimitInfo storage info = tokenDailyLimitInfo[tokens[i]];
             info.dailyLimit = dailyLimits[i];
-            info.lastRequestTimestamp = block.timestamp;
+            info.lastRequestTimestamp = block.timestamp - dayLength;
         }   
     }
 
@@ -72,7 +74,7 @@ contract Vault {
         uint256 amount = info.dailyLimit;
         uint256 balance = IERC20(token).balanceOf(address(this));
 
-        if(info.lastRequestTimestamp == 0) {
+        if(!info.validToken) {
             return (false, "Token not valid in this vault");
         }
         if(info.lastRequestTimestamp + dayLength > block.timestamp) {
@@ -110,8 +112,19 @@ contract Vault {
                 return (false, "This withdraw has been disallowed");
             } 
 
+            if(!tokenDailyLimitInfo[token].validToken) {
+                return (false, "Token not valid in this vault");
+            }
+
+            uint256 balance = IERC20(token).balanceOf(address(this));
+            
+            if(balance < info.tokenAmount) {
+                return (false, "Not enough balance to complete withdraw");
+            }
+
             info.completed = true;
             largeWithdrawQueue[identifier] = info;
+
             SafeERC20.safeTransfer(IERC20(info.token), withdrawAddress, info.tokenAmount);
             emit withdrawAboveLimitSent(info.token, info.tokenAmount, block.timestamp, identifier);
 
@@ -154,10 +167,10 @@ contract Vault {
         DailyLimitInfo storage info = tokenDailyLimitInfo[token];
         info.dailyLimit = newLimit;
         
-        // setting the last request timestamp for new tokens
+        // setting the valid field for new tokens
         // open question: does the last request timestamp need to be set here for already existing tokens? 
-        if (info.lastRequestTimestamp == 0){
-            info.lastRequestTimestamp = block.timestamp;
+        if (!info.validToken){
+            info.validToken = true;
         }
     }
 
