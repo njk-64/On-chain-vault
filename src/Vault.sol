@@ -119,7 +119,7 @@ contract Vault {
             uint256 balance = IERC20(token).balanceOf(address(this));
             
             if(balance < info.tokenAmount) {
-                return (false, "Not enough balance to complete withdraw");
+                return (false, "Not enough vault balance to complete withdraw");
             }
 
             info.completed = true;
