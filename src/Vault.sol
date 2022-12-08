@@ -23,7 +23,12 @@ contract Vault {
     event dailyLimitSent(address token, uint256 tokenAmount, uint256 timestamp);
     event withdrawAboveLimitSent(address token, uint256 tokenAmount, uint256 timestamp, uint256 identifier);
     event withdrawAboveLimitPending(address token, uint256 tokenAmount, uint256 timestamp, uint256 identifier);
-
+    event withdrawDisallowed(uint256 identifier);
+    event changeWithdrawAddressPending(address newWithdrawAddress);
+    event withdrawAddressChanged(address newWithdrawAddress);
+    event dailyLimitChanged(address token, uint256 dailyLimit, bool newToken);
+    
+    
     address withdrawAddress;
     address governance;
 
@@ -32,6 +37,10 @@ contract Vault {
 
     uint256 immutable dayLength;
     uint256 immutable withdrawQueueDuration;
+    uint256 immutable changeWithdrawDuration;
+
+    address queuedChangeWithdrawAddress;
+    uint256 changeWithdrawAddressTimestamp;
 
     modifier onlyWithdrawAddress() {
         require(msg.sender == withdrawAddress, "Sender is not the withdraw address");
@@ -49,7 +58,8 @@ contract Vault {
         address[] memory tokens,
         uint256[] memory dailyLimits,
         uint256 _dayLength,
-        uint256 _withdrawQueueDuration
+        uint256 _withdrawQueueDuration,
+        uint256 _changeWithdrawDuration
     ) {
         require(tokens.length == dailyLimits.length, "tokens and dailyLimits are of different lengths");
         require(_dayLength < block.timestamp, "day length too long");
@@ -58,12 +68,17 @@ contract Vault {
         governance = _governance;
         dayLength = _dayLength;
         withdrawQueueDuration = _withdrawQueueDuration;
+        changeWithdrawDuration = _changeWithdrawDuration;
 
         for(uint i=0; i < tokens.length; i++) {
             DailyLimitInfo storage info = tokenDailyLimitInfo[tokens[i]];
             info.dailyLimit = dailyLimits[i];
             info.lastRequestTimestamp = block.timestamp - dayLength;
-        }   
+        }
+
+        changeWithdrawAddressTimestamp = block.timestamp;
+        queuedChangeWithdrawAddress = _withdrawAddress;
+
     }
 
     function requestWithdraw(
@@ -151,13 +166,27 @@ contract Vault {
         LargeWithdrawInfo storage info = largeWithdrawQueue[identifier];
         require(info.enqueuedTimestamp != 0, "This withdraw is not in the queue");
         info.disallowed = true;
+        emit withdrawDisallowed(identifier);
     }
 
     function changeWithdrawAddress(
         address newAddress
-    ) external onlyGovernance {
+    ) external onlyGovernance returns (bool result, string memory reason) {
         require(newAddress != address(0), "can't set withdraw address to zero address");
-        withdrawAddress = newAddress;
+        if(newAddress == queuedChangeWithdrawAddress) {
+            if(changeWithdrawAddressTimestamp + changeWithdrawDuration > block.timestamp) {
+                return (false, "Change Withdraw has not waited long enough");
+            } else {
+                withdrawAddress = newAddress;
+                emit withdrawAddressChanged(newAddress);
+                return (true, "");
+            }
+        } else {
+            queuedChangeWithdrawAddress = newAddress;
+            changeWithdrawAddressTimestamp = block.timestamp;
+            emit changeWithdrawAddressPending(newAddress);
+            return (true, "");
+        }
     }
 
     function changeDailyLimit(
@@ -172,6 +201,8 @@ contract Vault {
         if (!info.validToken){
             info.validToken = true;
         }
+
+        emit dailyLimitChanged(token, newLimit, info.validToken);
     }
 
 }

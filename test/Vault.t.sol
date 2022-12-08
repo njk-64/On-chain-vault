@@ -15,6 +15,7 @@ contract VaultTest is Test {
     address governance;
     uint256 dayLength;
     uint256 withdrawQueueDuration;
+    uint256 changeWithdrawDuration;
 
     function setUp() public {
         
@@ -33,6 +34,7 @@ contract VaultTest is Test {
 
         dayLength = 1 days;
         withdrawQueueDuration = 1 days;
+        changeWithdrawDuration = 1 days;
 
         skip(100 days);
     
@@ -42,7 +44,8 @@ contract VaultTest is Test {
             assetsBlank,
             initialDailyLimits,
             dayLength,
-            withdrawQueueDuration
+            withdrawQueueDuration,
+            changeWithdrawDuration
         );
 
     }
