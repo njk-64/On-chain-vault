@@ -6,51 +6,67 @@ import "forge-std/console.sol";
 
 contract Vault {
 
+    // Address that is allowed to withdraw from Vault
+    address withdrawAddress;
+    modifier onlyWithdrawAddress() {
+        require(msg.sender == withdrawAddress, "Sender is not the withdraw address");
+        _;
+    }
+
+    // Address that is allowed to perform governance actions in the Vault
+    address governance;
+    modifier onlyGovernance() {
+        require(msg.sender == governance, "Sender is not the governance address");
+        _;
+    }
+
+    // Map of token address => daily limit info
     struct DailyLimitInfo {
         uint256 dailyLimit;
         uint256 lastRequestTimestamp;
         bool validToken;
     }
+    mapping(address => DailyLimitInfo) tokenDailyLimitInfo;
 
-    struct LargeWithdrawInfo {
+    // Map of pending withdraw requests 
+    struct WithdrawOutsideLimitInfo {
         uint256 enqueuedTimestamp;
         uint256 tokenAmount;
         address token;
         bool disallowed;
         bool completed;
     }
+    mapping(uint256 => WithdrawOutsideLimitInfo) pendingWithdrawsOutsideLimit;
 
+    // Events
     event dailyLimitSent(address token, uint256 tokenAmount, uint256 timestamp);
-    event withdrawAboveLimitSent(address token, uint256 tokenAmount, uint256 timestamp, uint256 identifier);
-    event withdrawAboveLimitPending(address token, uint256 tokenAmount, uint256 timestamp, uint256 identifier);
+    event withdrawOutsideLimitSent(address token, uint256 tokenAmount, uint256 timestamp, uint256 identifier);
+    event withdrawOutsideLimitPending(address token, uint256 tokenAmount, uint256 timestamp, uint256 identifier);
     event withdrawDisallowed(uint256 identifier);
     event changeWithdrawAddressPending(address newWithdrawAddress);
     event withdrawAddressChanged(address newWithdrawAddress);
     event dailyLimitChanged(address token, uint256 dailyLimit, bool newToken);
-    
-    
-    address withdrawAddress;
-    address governance;
+    event increaseDailyLimitPending(address token, uint256 newLimit, bool newToken);
 
-    mapping(address => DailyLimitInfo) tokenDailyLimitInfo;
-    mapping(uint256 => LargeWithdrawInfo) largeWithdrawQueue;
-
+    // Protocol constants
     uint256 immutable dayLength;
     uint256 immutable withdrawQueueDuration;
     uint256 immutable changeWithdrawDuration;
+    uint256 immutable increaseDailyLimitDuration;
 
+    // Pending 'change withdraw' request
     address queuedChangeWithdrawAddress;
     uint256 changeWithdrawAddressTimestamp;
 
-    modifier onlyWithdrawAddress() {
-        require(msg.sender == withdrawAddress, "Sender is not the withdraw address");
-        _;
+    // Pending 'increase daily limit' requests
+    struct IncreaseDailyLimitInfo {
+        uint256 enqueuedTimestamp;
+        uint256 newLimit;
+        bool isPending;
     }
+    mapping (address => IncreaseDailyLimitInfo) pendingIncreaseDailyLimit;
 
-    modifier onlyGovernance() {
-        require(msg.sender == governance, "Sender is not the governance address");
-        _;
-    }
+    
 
     constructor(
         address _withdrawAddress,
@@ -59,21 +75,23 @@ contract Vault {
         uint256[] memory dailyLimits,
         uint256 _dayLength,
         uint256 _withdrawQueueDuration,
-        uint256 _changeWithdrawDuration
+        uint256 _changeWithdrawDuration,
+        uint256 _increaseDailyLimitDuration
     ) {
         require(tokens.length == dailyLimits.length, "tokens and dailyLimits are of different lengths");
-        require(_dayLength < block.timestamp, "day length too long");
 
         withdrawAddress = _withdrawAddress;
         governance = _governance;
+        
         dayLength = _dayLength;
         withdrawQueueDuration = _withdrawQueueDuration;
         changeWithdrawDuration = _changeWithdrawDuration;
+        increaseDailyLimitDuration = _increaseDailyLimitDuration;
 
         for(uint i=0; i < tokens.length; i++) {
             DailyLimitInfo storage info = tokenDailyLimitInfo[tokens[i]];
             info.dailyLimit = dailyLimits[i];
-            info.lastRequestTimestamp = block.timestamp - dayLength;
+            info.validToken = true;
         }
 
         changeWithdrawAddressTimestamp = block.timestamp;
@@ -112,7 +130,7 @@ contract Vault {
         uint256 amount,
         uint256 identifier
     ) external onlyWithdrawAddress returns (bool result, string memory reason) {
-        LargeWithdrawInfo memory info = largeWithdrawQueue[identifier];
+        WithdrawOutsideLimitInfo memory info = pendingWithdrawsOutsideLimit[identifier];
 
         if(info.enqueuedTimestamp !=0) {
             if(info.enqueuedTimestamp + withdrawQueueDuration > block.timestamp) {
@@ -138,15 +156,15 @@ contract Vault {
             }
 
             info.completed = true;
-            largeWithdrawQueue[identifier] = info;
+            pendingWithdrawsOutsideLimit[identifier] = info;
 
             SafeERC20.safeTransfer(IERC20(info.token), withdrawAddress, info.tokenAmount);
-            emit withdrawAboveLimitSent(info.token, info.tokenAmount, block.timestamp, identifier);
+            emit withdrawOutsideLimitSent(info.token, info.tokenAmount, block.timestamp, identifier);
 
             return (true, "");
         }
 
-        info = LargeWithdrawInfo({
+        info = WithdrawOutsideLimitInfo({
             enqueuedTimestamp: block.timestamp,
             token: token,
             tokenAmount: amount,
@@ -154,16 +172,16 @@ contract Vault {
             disallowed: false
         });
 
-        largeWithdrawQueue[identifier] = info;
-        emit withdrawAboveLimitPending(token, amount, block.timestamp, identifier);
+        pendingWithdrawsOutsideLimit[identifier] = info;
+        emit withdrawOutsideLimitPending(token, amount, block.timestamp, identifier);
 
         return (true, "");
     }
 
-    function disallowLargeWithdraw(
+    function disallowWithdrawOutsideLimit(
         uint256 identifier
     ) external onlyGovernance {
-        LargeWithdrawInfo storage info = largeWithdrawQueue[identifier];
+        WithdrawOutsideLimitInfo storage info = pendingWithdrawsOutsideLimit[identifier];
         require(info.enqueuedTimestamp != 0, "This withdraw is not in the queue");
         info.disallowed = true;
         emit withdrawDisallowed(identifier);
@@ -191,18 +209,36 @@ contract Vault {
 
     function changeDailyLimit(
         address token, uint256 newLimit
-    ) external onlyGovernance {
+    ) external onlyGovernance returns (bool result, string memory reason) {
         // removing the valid token check as new tokens can also be added through this method
         DailyLimitInfo storage info = tokenDailyLimitInfo[token];
-        info.dailyLimit = newLimit;
-        
-        // setting the valid field for new tokens
-        // open question: does the last request timestamp need to be set here for already existing tokens? 
-        if (!info.validToken){
-            info.validToken = true;
+        IncreaseDailyLimitInfo storage pending = pendingIncreaseDailyLimit[token];
+        bool changeLimit = false;
+        if(info.dailyLimit >= newLimit) {
+            changeLimit = true;
+        } else if(pending.isPending && pending.newLimit == newLimit) {
+            if(pending.enqueuedTimestamp + increaseDailyLimitDuration <= block.timestamp) {
+                changeLimit = true;
+            } else {
+                return (false, "Increase daily limit has not waited long enough");
+            }
+        } else {
+            pending.isPending = true;
+            pending.newLimit = newLimit;
+            pending.enqueuedTimestamp = block.timestamp;
+            emit increaseDailyLimitPending(token, newLimit, !info.validToken);
         }
 
-        emit dailyLimitChanged(token, newLimit, info.validToken);
+        if(changeLimit) {
+            emit dailyLimitChanged(token, newLimit, !info.validToken);
+            info.dailyLimit = newLimit;
+            pending.isPending = false;
+            if (!info.validToken)   {
+                info.validToken = true;
+            }
+        }
+
+        return (true, "");
     }
 
 }

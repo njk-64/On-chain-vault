@@ -9,69 +9,76 @@ import {ERC20} from "openzeppelin/token/ERC20/ERC20.sol";
 
 contract VaultTest is Test {
  
-    address[] assets;
-    Vault vault;
-    address withdraw_address;
-    address governance;
-    uint256 dayLength;
-    uint256 withdrawQueueDuration;
-    uint256 changeWithdrawDuration;
-
-    function setUp() public {
-        
-        ERC20 eth = new ERC20("Ether", "ETH");
-        ERC20 avax = new ERC20("Avax", "AVAX");
-        ERC20 bnb = new ERC20("Bnb", "BNB");
-        assets.push(address(eth)); 
-        assets.push(address(avax));
-        assets.push(address(bnb));
-
-        withdraw_address = address(this);
-        governance = address(0x2);
-
-        uint256[] memory initialDailyLimits = new uint256[](0);
-        address[] memory assetsBlank = new address[](0);
-
-        dayLength = 1 days;
-        withdrawQueueDuration = 1 days;
-        changeWithdrawDuration = 1 days;
-
-        skip(100 days);
     
-        vault = new Vault(
-            withdraw_address,
-            governance,
-            assetsBlank,
-            initialDailyLimits,
-            dayLength,
-            withdrawQueueDuration,
-            changeWithdrawDuration
-        );
+    Vault vault;
 
+    struct Constants {
+        TokenConstants token0;
+        TokenConstants token1; // not initially in vault
+        TokenConstants token2; // not initially in vault
+        address withdraw_address;
+        address governance;
+        uint128 dayLength;
+        uint128 withdrawQueueDuration;
+        uint128 changeWithdrawDuration;
+        uint128 increaseDailyLimitDuration;
     }
 
-    function testNormalWithdraws(uint256 dailyLimit, uint256 totalBalance) public {
-        vm.assume(dailyLimit > 0);
-        vm.assume(totalBalance/dailyLimit < 1e4);
+    struct TokenConstants {
+        uint128 initialDailyLimit;
+        string name;
+        string symbol;
+    }
 
-        vm.prank(governance);
-        vault.changeDailyLimit(assets[0], dailyLimit);
+    function setUpVault(Constants memory c) internal returns (address[] memory tokens) {
+        tokens = new address[](3);
+        tokens[0] = address(new ERC20(c.token0.name, c.token0.symbol));
+        tokens[1] = address(new ERC20(c.token1.name, c.token1.symbol));
+        tokens[2] = address(new ERC20(c.token2.name, c.token2.symbol));
 
-        deal(assets[0], address(vault), totalBalance);
+        address[] memory tokensInitial = new address[](1);
+        tokensInitial[0] = address(tokens[0]);
+        uint256[] memory initialDailyLimits = new uint256[](1);
+        initialDailyLimits[0] = c.token0.initialDailyLimit;
+        vault = new Vault(
+            c.withdraw_address,
+            c.governance,
+            tokensInitial,
+            initialDailyLimits,
+            c.dayLength,
+            c.withdrawQueueDuration,
+            c.changeWithdrawDuration,
+            c.increaseDailyLimitDuration
+        );
+    }
+
+    function testNormalWithdraws(Constants memory c, uint256 totalBalance) public {
+        vm.assume(c.token0.initialDailyLimit > 0);
+        vm.assume(totalBalance/c.token0.initialDailyLimit < 1e4);
+        vm.assume(c.dayLength >= 1);
+        vm.assume(c.governance != address(0x0));
+        vm.assume(c.withdraw_address != address(0x0));
+
+        address[] memory tokens = setUpVault(c);
+
+        skip(c.dayLength);
+
+        deal(tokens[0], address(vault), totalBalance);
         
         bool result; 
         string memory reason;
         
-        for(uint256 i=0; i<(totalBalance/dailyLimit + 1); i++) {
+        for(uint256 i=0; i<(totalBalance/c.token0.initialDailyLimit + 1); i++) {
            
-            (result, reason) = vault.requestWithdraw(assets[0]);
+            vm.prank(c.withdraw_address);
+            (result, reason) = vault.requestWithdraw(tokens[0]);
             console.log(reason);
             assertTrue(result, "Withdraw should have gone through");
 
-            skip(dayLength - 1);
+            skip(c.dayLength - 1);
 
-           
-            (result, reason) = vault.requestWithdraw(assets[0]);
+            vm.prank(c.withdraw_address);
+            (result, reason) = vault.requestWithdraw(tokens[0]);
 
             console.log(reason);
 
@@ -81,47 +88,62 @@ contract VaultTest is Test {
             skip(1);
         }
 
-        assertTrue(IERC20(assets[0]).balanceOf(withdraw_address) == totalBalance, "Not all assets were transferred to withdraw_address");
-        assertTrue(IERC20(assets[0]).balanceOf(address(vault)) == 0, "Not all assets were withdrawn from vault");
+        assertTrue(IERC20(tokens[0]).balanceOf(c.withdraw_address) == totalBalance, "Not all assets were transferred to withdraw_address");
+        assertTrue(IERC20(tokens[0]).balanceOf(address(vault)) == 0, "Not all assets were withdrawn from vault");
 
-       
-        (result, reason) = vault.requestWithdraw(assets[1]);
+        vm.prank(c.withdraw_address);
+        (result, reason) = vault.requestWithdraw(tokens[1]);
         assertTrue(!result, "Withdraw should not have gone through");
-        assertEq(reason, "Token not valid in this vault");
+        assertEq(reason, "Token not valid in this vault", "Wrong reason for not granting withdraw");
 
-        (result, reason) = vault.requestWithdraw(assets[0]); // transfers nothing
+        vm.prank(c.withdraw_address);
+        (result, reason) = vault.requestWithdraw(tokens[0]); // transfers nothing
         assertTrue(result, "Withdraw should have gone through");
     }
 
-    function testLargeWithdraws(uint256 dailyLimit, uint256 iters, uint256 amount, uint256 totalBalance) public {
-        vm.assume(dailyLimit > 0);
+    function testLargeWithdraws(Constants memory c, uint256 iters, uint256 amount, uint256 totalBalance) public {
+        vm.assume(c.token1.initialDailyLimit > 0);
         vm.assume(iters < 1e4);
         vm.assume(iters > 0);
         vm.assume(amount < 1e70/iters);
-        vm.assume(2*amount > dailyLimit);
+        vm.assume(2*amount > c.token1.initialDailyLimit);
         vm.assume(totalBalance > amount*iters);
-        vm.prank(governance);
-        vault.changeDailyLimit(assets[1], dailyLimit);
+        vm.assume(c.withdrawQueueDuration >= 1);
+        vm.assume(c.governance != address(0x0));
+        vm.assume(c.withdraw_address != address(0x0));
+        
 
-        deal(assets[1], address(vault), totalBalance);
+        address[] memory tokens = setUpVault(c);
+
+        vm.prank(c.governance);
+        vault.changeDailyLimit(tokens[1], c.token1.initialDailyLimit);
+        skip(c.increaseDailyLimitDuration);
+        vm.prank(c.governance);
+        vault.changeDailyLimit(tokens[1], c.token1.initialDailyLimit);
+
+        deal(tokens[1], address(vault), totalBalance);
+        
         
         bool result; 
         string memory reason;
 
-        vault.requestWithdrawOutsideLimit(assets[0], amount, iters+1);
+        vm.prank(c.withdraw_address);
+        vault.requestWithdrawOutsideLimit(tokens[0], amount, iters+1);
         
         for(uint256 i=0; i<iters; i++) {
-            (result, reason) = vault.requestWithdrawOutsideLimit(assets[1], amount, i);
+            vm.prank(c.withdraw_address);
+            (result, reason) = vault.requestWithdrawOutsideLimit(tokens[1], amount, i);
             assertTrue(result, "Withdraw should have been added to queue");
         }
 
-        assertTrue(IERC20(assets[1]).balanceOf(withdraw_address) == 0, "Nothing was transferred yet");
+        assertTrue(IERC20(tokens[1]).balanceOf(c.withdraw_address) == 0, "Nothing was transferred yet");
 
 
-        skip(withdrawQueueDuration - 1);
+        skip(c.withdrawQueueDuration - 1);
 
         for(uint256 i=0; i<iters; i++) {
-            (result, reason) = vault.requestWithdrawOutsideLimit(assets[1], amount, i);
+            vm.prank(c.withdraw_address);
+            (result, reason) = vault.requestWithdrawOutsideLimit(tokens[1], amount, i);
 
             assertTrue(!result, "Withdraw should not have gone through");
             assertEq(reason, "Withdraw has not waited long enough in the queue", "Wrong reason for not granting withdraw");
@@ -130,41 +152,47 @@ contract VaultTest is Test {
         skip(1);
 
         for(uint256 i=0; i<iters; i++) {
-            (result, reason) = vault.requestWithdrawOutsideLimit(assets[1], amount*iters, i);
+            vm.prank(c.withdraw_address);
+            (result, reason) = vault.requestWithdrawOutsideLimit(tokens[1], amount*iters, i);
 
             assertTrue(result, "Withdraw should have gone through");
             
 
-            assertTrue(IERC20(assets[1]).balanceOf(withdraw_address) == (i+1)*amount, "Not all assets were transferred to withdraw_address");
-            assertTrue(IERC20(assets[1]).balanceOf(address(vault)) == totalBalance - (i+1)*amount, "Not all assets were withdrawn from vault");
+            assertTrue(IERC20(tokens[1]).balanceOf(c.withdraw_address) == (i+1)*amount, "Not all assets were transferred to withdraw_address");
+            assertTrue(IERC20(tokens[1]).balanceOf(address(vault)) == totalBalance - (i+1)*amount, "Not all assets were withdrawn from vault");
         }
     
-       
-        (result, reason) = vault.requestWithdrawOutsideLimit(assets[0], amount, iters+1);
+        vm.prank(c.withdraw_address);
+        (result, reason) = vault.requestWithdrawOutsideLimit(tokens[2], amount, iters+1);
         assertTrue(!result, "Withdraw should not have gone through");
         assertEq(reason, "Token not valid in this vault", "Wrong reason for not granting withdraw");
 
         for(uint256 i=0; i<iters; i++) {
-            (result, reason) = vault.requestWithdrawOutsideLimit(assets[1], amount, i);
+            vm.prank(c.withdraw_address);
+            (result, reason) = vault.requestWithdrawOutsideLimit(tokens[1], amount, i);
 
             assertTrue(!result, "Withdraw should not have gone through");
             assertEq(reason, "Withdraw has already been completed", "Wrong reason for not granting withdraw");
         }
 
-        vault.requestWithdrawOutsideLimit(assets[1], totalBalance - iters*amount + 1, iters+2);
-        skip(withdrawQueueDuration);
-        (result, reason) = vault.requestWithdrawOutsideLimit(assets[1], totalBalance - iters*amount + 1, iters+2);
+        vm.prank(c.withdraw_address);
+        vault.requestWithdrawOutsideLimit(tokens[1], totalBalance - iters*amount + 1, iters+2);
+        skip(c.withdrawQueueDuration);
+        vm.prank(c.withdraw_address);
+        (result, reason) = vault.requestWithdrawOutsideLimit(tokens[1], totalBalance - iters*amount + 1, iters+2);
         assertTrue(!result, "Withdraw should not have gone through");
         assertEq(reason, "Not enough vault balance to complete withdraw", "Wrong reason for not granting withdraw");
 
-        vault.requestWithdrawOutsideLimit(assets[1], totalBalance - iters*amount, iters+3);
+        vm.prank(c.withdraw_address);
+        vault.requestWithdrawOutsideLimit(tokens[1], totalBalance - iters*amount, iters+3);
         
-        vm.prank(governance);
-        skip(withdrawQueueDuration-1);
-        vault.disallowLargeWithdraw(iters+3);
+        skip(c.withdrawQueueDuration-1);
+        vm.prank(c.governance);
+        vault.disallowWithdrawOutsideLimit(iters+3);
         skip(1);
 
-        (result, reason) = vault.requestWithdrawOutsideLimit(assets[1], totalBalance - iters*amount, iters+3);
+        vm.prank(c.withdraw_address);
+        (result, reason) = vault.requestWithdrawOutsideLimit(tokens[1], totalBalance - iters*amount, iters+3);
         assertTrue(!result, "Withdraw should not have gone through");
         assertEq(reason, "This withdraw has been disallowed", "Wrong reason for not granting withdraw");
 
