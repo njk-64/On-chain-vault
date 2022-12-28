@@ -199,5 +199,14 @@ contract VaultTest is Test {
 
     }
 
+    function testChangeWithdrawAddress(Constants memory c, address newWithdrawAddress) public {
+
+    }
+
+    function testIncreaseDailyLimit(Constants memory c, uint128 newDailyLimit) public {
+
+    }
+
+
 
 }
