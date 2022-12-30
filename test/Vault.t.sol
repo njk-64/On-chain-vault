@@ -200,10 +200,98 @@ contract VaultTest is Test {
     }
 
     function testChangeWithdrawAddress(Constants memory c, address newWithdrawAddress) public {
+        vm.assume(c.changeWithdrawDuration >= 1);
+        vm.assume(newWithdrawAddress != address(0x0));
+        vm.assume(c.governance != address(0x0));
+        vm.assume(c.withdraw_address != address(0x0));
+        vm.assume(c.withdraw_address != newWithdrawAddress);
+        vm.assume(c.withdraw_address != c.governance);
+
+        address[] memory tokens = setUpVault(c);
+
+        skip(c.dayLength);
+
+        bool result;
+        string memory reason;
+
+        deal(tokens[0], address(vault), c.token0.initialDailyLimit);
+
+        vm.prank(c.governance);
+        (result, reason) = vault.changeWithdrawAddress(newWithdrawAddress);
+        assertTrue(result, "Withdraw request did not go through");
+        
+        skip(c.changeWithdrawDuration - 1);
+        vm.prank(c.governance);
+        (result, reason) = vault.changeWithdrawAddress(newWithdrawAddress);
+        assertTrue(!result, "Change should not have worked");
+        assertEq(reason, "Change Withdraw has not waited long enough", "Wrong Reason");
+
+        skip(1);
+        vm.prank(c.withdraw_address);
+        vm.expectRevert("Sender is not the governance address");
+        (result, reason) = vault.changeWithdrawAddress(newWithdrawAddress);
+
+        vm.prank(c.governance);
+        (result, reason) = vault.changeWithdrawAddress(newWithdrawAddress);
+        assertTrue(result, "Should have worked");
+
+        vm.prank(newWithdrawAddress);
+        vault.requestWithdraw(tokens[0]);
+
+        assertTrue(IERC20(tokens[0]).balanceOf(newWithdrawAddress) == c.token0.initialDailyLimit, "Not all assets were transferred to new withdraw address");
+        assertTrue(IERC20(tokens[0]).balanceOf(address(vault)) == 0, "Not all assets were withdrawn from vault");
 
     }
 
-    function testIncreaseDailyLimit(Constants memory c, uint128 newDailyLimit) public {
+    function testIncreaseDailyLimit(Constants memory c, uint128 newDailyLimit1, uint128 newDailyLimit2, uint256 totalBalance) public {
+        vm.assume(c.increaseDailyLimitDuration >= 1);
+        vm.assume(c.governance != address(0x0));
+        vm.assume(c.withdraw_address != address(0x0));
+        vm.assume(c.withdraw_address != c.governance);
+        uint256 sum = uint256(0) + c.token0.initialDailyLimit + newDailyLimit1 + newDailyLimit2;
+        vm.assume(totalBalance >= sum);
+        vm.assume(c.token0.initialDailyLimit <= newDailyLimit2);
+        vm.assume(newDailyLimit1 > newDailyLimit2);
+
+        address[] memory tokens = setUpVault(c);
+
+        skip(c.dayLength);
+
+        deal(tokens[0], address(vault), totalBalance);
+
+        vm.prank(c.governance);
+        vault.changeDailyLimit(tokens[0], newDailyLimit1);
+
+        skip(c.increaseDailyLimitDuration - 1);
+
+        vm.prank(c.withdraw_address);
+        vault.requestWithdraw(tokens[0]);
+
+        skip(c.dayLength + uint256(1));
+
+        vm.prank(c.governance);
+        vault.changeDailyLimit(tokens[0], newDailyLimit1);
+
+        vm.prank(c.withdraw_address);
+        vault.requestWithdraw(tokens[0]);
+
+        vm.prank(c.governance);
+        vault.changeDailyLimit(tokens[0], newDailyLimit2);
+
+        skip(c.dayLength);
+
+        vm.prank(c.withdraw_address);
+        vault.requestWithdraw(tokens[0]);
+
+        
+
+        assertTrue(IERC20(tokens[0]).balanceOf(c.withdraw_address) == sum, "Not all assets were transferred to new withdraw address");
+        assertTrue(IERC20(tokens[0]).balanceOf(address(vault)) == totalBalance - sum, "Not all assets were withdrawn from vault");
+
+
+
+
+
 
     }
 
