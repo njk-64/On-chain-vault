@@ -3,6 +3,7 @@ pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
 import {Vault} from "../src/Vault.sol";
+import {IVault} from "../src/IVault.sol";
 
 import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
 import {ERC20} from "openzeppelin/token/ERC20/ERC20.sol";
@@ -10,7 +11,7 @@ import {ERC20} from "openzeppelin/token/ERC20/ERC20.sol";
 contract VaultTest is Test {
  
     
-    Vault vault;
+    IVault vault;
 
     struct Constants {
         TokenConstants token0;
@@ -71,14 +72,14 @@ contract VaultTest is Test {
         for(uint256 i=0; i<(totalBalance/c.token0.initialDailyLimit + 1); i++) {
            
             vm.prank(c.withdraw_address);
-            (result, reason) = vault.requestWithdraw(tokens[0]);
+            (result, reason) = vault.withdrawDailyLimit(tokens[0]);
             console.log(reason);
             assertTrue(result, "Withdraw should have gone through");
 
             skip(c.dayLength - 1);
 
             vm.prank(c.withdraw_address);
-            (result, reason) = vault.requestWithdraw(tokens[0]);
+            (result, reason) = vault.withdrawDailyLimit(tokens[0]);
 
             console.log(reason);
 
@@ -92,12 +93,12 @@ contract VaultTest is Test {
         assertTrue(IERC20(tokens[0]).balanceOf(address(vault)) == 0, "Not all assets were withdrawn from vault");
 
         vm.prank(c.withdraw_address);
-        (result, reason) = vault.requestWithdraw(tokens[1]);
+        (result, reason) = vault.withdrawDailyLimit(tokens[1]);
         assertTrue(!result, "Withdraw should not have gone through");
         assertEq(reason, "Token not valid in this vault", "Wrong reason for not granting withdraw");
 
         vm.prank(c.withdraw_address);
-        (result, reason) = vault.requestWithdraw(tokens[0]); // transfers nothing
+        (result, reason) = vault.withdrawDailyLimit(tokens[0]); // transfers nothing
         assertTrue(result, "Withdraw should have gone through");
     }
 
@@ -236,7 +237,7 @@ contract VaultTest is Test {
         assertTrue(result, "Should have worked");
 
         vm.prank(newWithdrawAddress);
-        vault.requestWithdraw(tokens[0]);
+        vault.withdrawDailyLimit(tokens[0]);
 
         assertTrue(IERC20(tokens[0]).balanceOf(newWithdrawAddress) == c.token0.initialDailyLimit, "Not all assets were transferred to new withdraw address");
         assertTrue(IERC20(tokens[0]).balanceOf(address(vault)) == 0, "Not all assets were withdrawn from vault");
@@ -265,7 +266,7 @@ contract VaultTest is Test {
         skip(c.increaseDailyLimitDuration - 1);
 
         vm.prank(c.withdraw_address);
-        vault.requestWithdraw(tokens[0]);
+        vault.withdrawDailyLimit(tokens[0]);
 
         skip(c.dayLength + uint256(1));
 
@@ -273,7 +274,7 @@ contract VaultTest is Test {
         vault.changeDailyLimit(tokens[0], newDailyLimit1);
 
         vm.prank(c.withdraw_address);
-        vault.requestWithdraw(tokens[0]);
+        vault.withdrawDailyLimit(tokens[0]);
 
         vm.prank(c.governance);
         vault.changeDailyLimit(tokens[0], newDailyLimit2);
@@ -281,7 +282,7 @@ contract VaultTest is Test {
         skip(c.dayLength);
 
         vm.prank(c.withdraw_address);
-        vault.requestWithdraw(tokens[0]);
+        vault.withdrawDailyLimit(tokens[0]);
 
         
 

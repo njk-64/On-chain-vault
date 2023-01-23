@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 import "openzeppelin/token/ERC20/utils/SafeERC20.sol";
+import {IVault} from "./IVault.sol";
 
-import "forge-std/console.sol";
-
-contract Vault {
+contract Vault is IVault {
 
     // Address that is allowed to withdraw from Vault
     address withdrawAddress;
@@ -20,22 +19,7 @@ contract Vault {
         _;
     }
 
-    // Map of token address => daily limit info
-    struct DailyLimitInfo {
-        uint256 dailyLimit;
-        uint256 lastRequestTimestamp;
-        bool validToken;
-    }
     mapping(address => DailyLimitInfo) tokenDailyLimitInfo;
-
-    // Map of pending withdraw requests 
-    struct WithdrawOutsideLimitInfo {
-        uint256 enqueuedTimestamp;
-        uint256 tokenAmount;
-        address token;
-        bool disallowed;
-        bool completed;
-    }
     mapping(uint256 => WithdrawOutsideLimitInfo) pendingWithdrawsOutsideLimit;
 
     // Events
@@ -59,14 +43,7 @@ contract Vault {
     uint256 changeWithdrawAddressTimestamp;
 
     // Pending 'increase daily limit' requests
-    struct IncreaseDailyLimitInfo {
-        uint256 enqueuedTimestamp;
-        uint256 newLimit;
-        bool isPending;
-    }
     mapping (address => IncreaseDailyLimitInfo) pendingIncreaseDailyLimit;
-
-    
 
     constructor(
         address _withdrawAddress,
@@ -99,7 +76,7 @@ contract Vault {
 
     }
 
-    function requestWithdraw(
+    function withdrawDailyLimit(
         address token
     ) external onlyWithdrawAddress returns (bool result, string memory reason) {
         DailyLimitInfo storage info = tokenDailyLimitInfo[token];
